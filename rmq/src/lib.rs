@@ -56,6 +56,43 @@ impl RMQArray for BruteForceRMQ {
     }
 }
 
+mod interval_table {
+    use super::*;
+    fn flat_idx(i: Idx, j: Idx, n: Idx) -> Idx {
+        let k = n - i - 2;
+        k * (k + 1) / 2 + j - i - 1
+    }
+
+    pub struct InterTable {
+        n: Idx,
+        table: Vec<Idx>,
+    }
+
+    impl InterTable {
+        pub fn new(n: Idx) -> InterTable {
+            let table: Vec<Idx> = vec![0; n * (n + 1) / 2];
+            InterTable { n, table }
+        }
+    }
+
+    impl std::ops::Index<(Idx, Idx)> for InterTable {
+        type Output = Idx;
+        fn index(&self, index: (Idx, Idx)) -> &Self::Output {
+            let (i, j) = index;
+            &self.table[flat_idx(i, j, self.n)]
+        }
+    }
+
+    impl std::ops::IndexMut<(Idx, Idx)> for InterTable {
+        fn index_mut(&mut self, index: (Idx, Idx)) -> &mut Self::Output {
+            let (i, j) = index;
+            &mut self.table[flat_idx(i, j, self.n)]
+        }
+    }
+}
+
+use interval_table::InterTable;
+
 /// Implements RMQ by table lookup. Has a complete table of all [i,j),
 /// so uses O(n²) memory, takes O(n²) time preprocessing, but then
 /// does RMQ in O(1).
@@ -122,6 +159,8 @@ mod tests {
         let v = vec![2, 1, 2, 5, 3, 6, 1, 3, 7, 4];
         let rmqa = BruteForceRMQ::new(v.clone());
         check_same_index(&rmqa, &v);
+        let rmqa = FullTabulateRMQ::new(v.clone());
+        check_same_index(&rmqa, &v);
     }
 
     #[test]
@@ -130,5 +169,22 @@ mod tests {
         let v = vec![2, 1, 2, 5, 3, 6, 1, 3, 7, 4];
         let rmqa = BruteForceRMQ::new(v.clone());
         check_min(&rmqa);
+        let rmqa = FullTabulateRMQ::new(v.clone());
+        check_min(&rmqa);
+
+        let n = 5;
+        let mut tbl: InterTable = InterTable::new(n);
+        for i in 0..n {
+            for j in i + 1..n {
+                tbl[(i, j)] = i;
+            }
+        }
+
+        for i in 0..n {
+            for j in i + 1..n {
+                println!("({},{}) -> {}", i, j, tbl[(i, j)]);
+            }
+        }
+        assert!(false);
     }
 }
