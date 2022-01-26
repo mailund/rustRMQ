@@ -163,13 +163,12 @@ mod power_table {
         round_down_offset(n) + 1 // might go one too high; fix later.
     }
 
-    /// From range [i,j), get values (k,j') where k is the offset
-    /// into the TwoD table to look up the value for [i,j') value there,
-    /// and where j' is the rounded down j, which is the index we should
-    /// linear search for in lcp[j'..j].
+    /// From range [i,j), get values (k,j-2^k) where k is the offset
+    /// into the TwoD table to look up the value for [i,i+2^k) and [j-2^k,j)
+    /// from which we can get the RMQ.
     pub fn adjusted_index(i: Idx, j: Idx) -> (Idx, Idx) {
         let k = round_down_offset(j - i);
-        (k, i + (1 << k))
+        (k, j - (1 << k))
     }
 
     /// A rather simple 2D array made from vectors of vectors.
@@ -232,37 +231,45 @@ mod power_table {
 
         #[test]
         fn test_adjusted_index() {
-            let (k, jj) = adjusted_index(0, 1);
+            let (k, ii) = adjusted_index(0, 1);
             assert_eq!(k, 0);
-            assert_eq!(jj, 1);
+            assert_eq!(ii, 0);
 
-            let (k, jj) = adjusted_index(0, 2);
+            let (k, ii) = adjusted_index(0, 2);
             assert_eq!(k, 1);
-            assert_eq!(jj, 2);
+            assert_eq!(ii, 0);
 
-            let (k, jj) = adjusted_index(0, 3);
+            let (k, ii) = adjusted_index(0, 3);
             assert_eq!(k, 1);
-            assert_eq!(jj, 2);
+            assert_eq!(ii, 1);
 
-            let (k, jj) = adjusted_index(0, 4);
+            let (k, ii) = adjusted_index(0, 4);
             assert_eq!(k, 2);
-            assert_eq!(jj, 4);
+            assert_eq!(ii, 0);
 
-            let (k, jj) = adjusted_index(0, 5);
+            let (k, ii) = adjusted_index(0, 5);
             assert_eq!(k, 2);
-            assert_eq!(jj, 4);
+            assert_eq!(ii, 1);
 
-            let (k, jj) = adjusted_index(0, 6);
+            let (k, ii) = adjusted_index(0, 6);
             assert_eq!(k, 2);
-            assert_eq!(jj, 4);
+            assert_eq!(ii, 2);
 
-            let (k, jj) = adjusted_index(0, 7);
+            let (k, ii) = adjusted_index(0, 7);
             assert_eq!(k, 2);
-            assert_eq!(jj, 4);
+            assert_eq!(ii, 3);
 
-            let (k, jj) = adjusted_index(0, 8);
+            let (k, ii) = adjusted_index(0, 8);
             assert_eq!(k, 3);
-            assert_eq!(jj, 8);
+            assert_eq!(ii, 0);
+
+            let (k, ii) = adjusted_index(1, 8);
+            assert_eq!(k, 2);
+            assert_eq!(ii, 4);
+
+            let (k, ii) = adjusted_index(1, 9);
+            assert_eq!(k, 3);
+            assert_eq!(ii, 1);
         }
 
         #[test]
@@ -303,11 +310,10 @@ use power_table::{adjusted_index, log, TwoD};
 
 /// RMQ table that tabulates all [i,i+2^k] ranges (there are O(n log n)),
 /// form which we can get the RMQ from the table by splitting [i,j) into
-/// two, [i,2^k) and [2^k,j) (where k is the largest such k). The first
-/// we can get from the tables in O(1) and the second we can get with a
-/// linear search in O(log n), since the range [2^k,j) can't be more than
-/// O(log n) long if k is the largest such k.
-/// The result is O(n log n) preprocessing and O(log n) lookup.
+/// two, [i,2^k) and [j-2^k,j) (where k is the largest such k). We can get
+/// the RMQ from those two intervals with a table lookup in O(1) and then
+/// pick the one of those with the smallest value.
+/// The result is O(n log n) preprocessing and O(1) lookup.
 struct PowerRMQ {
     lcp: Vec<Val>,
     tbl: TwoD,
@@ -343,18 +349,13 @@ impl RMQArray for PowerRMQ {
         &self.lcp[index]
     }
     fn rmq(&self, i: Idx, j: Idx) -> Idx {
-        let (k, jj) = adjusted_index(i, j);
+        // Work out k so [i,2^k) and [j-2^k,j) are overlapping (and are not overlapping)
+        // anything outside of [i,j). Then use the table to get the index with the smallest
+        // lcp in those intervals, and pick the smaller of the two (with the first index
+        // in case of a tie). All in O(1).
+        let (k, ii) = adjusted_index(i, j);
         let i1 = self.tbl[(i, k)];
-        if jj == j {
-            // If we do not have any left-over bits, we shouldn't
-            // mess with our result. We already have the result
-            // we need from the table.
-            return i1;
-        }
-        // Otherwise, we need to check if there is a smaller value
-        // in the flanking region. It can't be more than log(n)
-        // long, so a linear search is O(log n).
-        let i2 = jj + smallest_in_range(&self.lcp[jj..j]);
+        let i2 = self.tbl[(ii, k)];
         let v1 = self.lcp[i1];
         let v2 = self.lcp[i2];
         if v1 <= v2 {
