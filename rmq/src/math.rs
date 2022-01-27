@@ -1,6 +1,11 @@
 use super::Idx;
 use std::cmp::max;
 
+/// Tests if x is a power of two, x=2^k.
+pub fn power_of_two(x: Idx) -> bool {
+    (x == 0) || ((x & (x - 1)) == 0)
+}
+
 /// Get k such that 2**k is j rounded down to the
 /// nearest power of 2.
 /// We don't handle zero, because it is a special case
@@ -39,6 +44,20 @@ mod tests {
     use more_asserts::*;
 
     #[test]
+    fn test_power_of_two() {
+        assert!(power_of_two(0));
+        assert!(power_of_two(1));
+        assert!(power_of_two(2));
+        assert!(!power_of_two(3));
+        assert!(power_of_two(4));
+        assert!(!power_of_two(5));
+        assert!(!power_of_two(6));
+        assert!(!power_of_two(7));
+        assert!(power_of_two(8));
+        assert!(!power_of_two(9));
+    }
+
+    #[test]
     fn test_log2_down() {
         assert_eq!(0, log2_down(1));
         assert_eq!(1, log2_down(2));
@@ -52,6 +71,9 @@ mod tests {
         for i in 1..100 {
             let k = log2_down(i);
             assert_le!(1 << k, i);
+            if power_of_two(i) {
+                assert_eq!(i, 1 << k);
+            }
         }
     }
 
@@ -69,6 +91,9 @@ mod tests {
         for i in 1..100 {
             let k = log2_up(i);
             assert_le!(i, 1 << k);
+            if i > 1 && power_of_two(i) {
+                assert_eq!(i, 1 << k);
+            }
         }
         for k in 2..10 {
             let i = 1 << k;
