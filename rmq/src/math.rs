@@ -34,7 +34,7 @@ pub fn log2_up(n: Idx) -> Idx {
     // We have to always return at least 1, to handle arrays of length
     // one, even though 1 = 2^0 is a power of two.
     let k = log2_down(n);
-    let add = (n != (1 << k)) as Idx; // 1 if n is not a power of two.
+    let add = !power_of_two(n) as Idx; // 1 if n is not a power of two.
     max(1, k + add)
 }
 
