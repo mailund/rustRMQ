@@ -1,33 +1,21 @@
-/// The type we use for indexing into our arrays.
-type Idx = usize;
-/// The type our arrays hold. 32-bit are enough for genomic data.
-type Val = u32;
+mod math;
+use math::log2_up;
 
-/// Range Minimum Query interface.
-pub trait RMQArray: std::ops::Index<Idx, Output = Val> {
-    /// Create the necessary tables from a vector of values.
-    fn new(values: Vec<Val>) -> Self;
-    /// Get the length of the underlying array.
-    fn len(&self) -> Idx;
-    /// Get the value at a specific index.
-    fn val(&self, index: Idx) -> &Val;
-    /// Get the index of the first minimal value in the range [i,j).
-    fn rmq(&self, i: Idx, j: Idx) -> Idx;
-}
+mod rmq_array;
+#[allow(unused_imports)] // Importing RMQArray to expose it; I don't use it here
+use rmq_array::RMQArray;
+use rmq_array::{Idx, RMQArrayImpl, RMQArray_, Val};
 
-// Ugly hack for now! FIXME: Find a better solution to get a generic
-// Index<> implementation.
-macro_rules! adapt_index {
-    ($t:ident) => {
-        impl std::ops::Index<Idx> for $t {
-            type Output = Val;
-            fn index(&self, index: Idx) -> &Val {
-                self.val(index)
-            }
-        }
-    };
-}
+mod inter_table;
+use inter_table::InterTable;
 
+mod power_table;
+use power_table::{adjusted_index, TwoD};
+
+/// Finds the left-most index with the smallest value in x.
+/// The index returned is indexed from the start of x, so if x
+/// is a sub-range of some y, x = y[i..j], you should add i
+/// to get the index in y.
 fn smallest_in_range(x: &[Val]) -> Idx {
     let (k, _) = x
         .iter()
@@ -45,14 +33,13 @@ fn smallest_in_range(x: &[Val]) -> Idx {
 /// Implements RMQ by running through the [i,j) interval
 /// and finding the index with the smallest value.
 /// O(1) preprocessing and O(n) access.
-pub struct BruteForceRMQ {
+pub struct BruteForceRMQImpl {
     values: Vec<u32>,
 }
-adapt_index!(BruteForceRMQ); // Hack
 
-impl RMQArray for BruteForceRMQ {
-    fn new(values: Vec<Val>) -> BruteForceRMQ {
-        BruteForceRMQ { values }
+impl RMQArrayImpl for BruteForceRMQImpl {
+    fn new(values: Vec<Val>) -> BruteForceRMQImpl {
+        BruteForceRMQImpl { values }
     }
 
     fn len(&self) -> Idx {
@@ -67,58 +54,19 @@ impl RMQArray for BruteForceRMQ {
     }
 }
 
-mod interval_table {
-    use super::*;
-    fn flat_idx(i: Idx, j: Idx, n: Idx) -> Idx {
-        let k = n - i - 1;
-        k * (k + 1) / 2 + j - i - 1
-    }
-
-    pub struct InterTable {
-        n: Idx,
-        table: Vec<Idx>,
-    }
-
-    impl InterTable {
-        pub fn new(n: Idx) -> InterTable {
-            let table: Vec<Idx> = vec![0; n * (n + 1) / 2];
-            InterTable { n, table }
-        }
-    }
-
-    impl std::ops::Index<(Idx, Idx)> for InterTable {
-        type Output = Idx;
-        fn index(&self, index: (Idx, Idx)) -> &Self::Output {
-            let (i, j) = index;
-            assert!(i < self.n);
-            assert!(i < j && j <= self.n);
-            &self.table[flat_idx(i, j, self.n)]
-        }
-    }
-
-    impl std::ops::IndexMut<(Idx, Idx)> for InterTable {
-        fn index_mut(&mut self, index: (Idx, Idx)) -> &mut Self::Output {
-            let (i, j) = index;
-            assert!(i < self.n);
-            assert!(i < j && j <= self.n);
-            &mut self.table[flat_idx(i, j, self.n)]
-        }
-    }
-}
-
-use interval_table::InterTable;
+pub type BruteForceRMQ = RMQArray_<BruteForceRMQImpl>;
 
 /// Implements RMQ by table lookup. Has a complete table of all [i,j),
 /// so uses O(n²) memory, takes O(n²) time preprocessing, but then
 /// does RMQ in O(1).
-pub struct FullTabulateRMQ {
+pub struct FullTabulateRMQImpl {
     values: Vec<u32>,
     rmq: InterTable,
 }
-adapt_index!(FullTabulateRMQ); // Hack
+pub type FullTabulateRMQ = RMQArray_<FullTabulateRMQImpl>;
 
-impl RMQArray for FullTabulateRMQ {
-    fn new(values: Vec<u32>) -> FullTabulateRMQ {
+impl RMQArrayImpl for FullTabulateRMQImpl {
+    fn new(values: Vec<u32>) -> FullTabulateRMQImpl {
         let mut rmq = InterTable::new(values.len());
         for i in 0..values.len() {
             rmq[(i, i + 1)] = i;
@@ -131,7 +79,7 @@ impl RMQArray for FullTabulateRMQ {
                 rmq[(i, j)] = if v1 <= v2 { k } else { j - 1 }
             }
         }
-        FullTabulateRMQ { values, rmq }
+        FullTabulateRMQImpl { values, rmq }
     }
     fn len(&self) -> Idx {
         self.values.len()
@@ -144,186 +92,21 @@ impl RMQArray for FullTabulateRMQ {
     }
 }
 
-mod power_table {
-    use super::*;
-    /// Get k such that 2**k is j rounded down to the
-    /// nearest power of 2.
-    /// Can't use Idx here because I need Idx==u32, but
-    /// I'll just use it as u32 and expect the type checker
-    /// to complain if Idx ever changes type.
-    /// We don't handle zero, because it is a special case
-    /// and we don't need to round down zero.
-    fn round_down_offset(j: Idx) -> Idx {
-        assert!(j != 0);
-        (32 - (j as u32).leading_zeros() - 1) as Idx
-    }
-
-    /// For n, get (rounded up) log(n)
-    pub fn log(n: Idx) -> Idx {
-        round_down_offset(n) + 1 // might go one too high; fix later.
-    }
-
-    /// From range [i,j), get values (k,j-2^k) where k is the offset
-    /// into the TwoD table to look up the value for [i,i+2^k) and [j-2^k,j)
-    /// from which we can get the RMQ.
-    pub fn adjusted_index(i: Idx, j: Idx) -> (Idx, Idx) {
-        let k = round_down_offset(j - i);
-        (k, j - (1 << k))
-    }
-
-    /// A rather simple 2D array made from vectors of vectors.
-    /// There are better solutions, but I can implement those later
-    /// with the same interface.
-    pub struct TwoD {
-        table: Vec<Vec<Idx>>,
-    }
-
-    impl TwoD {
-        pub fn new(n: Idx) -> TwoD {
-            let table = vec![vec![0; log(n)]; n];
-            TwoD { table }
-        }
-    }
-
-    impl std::ops::Index<(Idx, Idx)> for TwoD {
-        type Output = Idx;
-        fn index(&self, index: (Idx, Idx)) -> &Self::Output {
-            let (i, j) = index;
-            &self.table[i][j]
-        }
-    }
-
-    impl std::ops::IndexMut<(Idx, Idx)> for TwoD {
-        fn index_mut(&mut self, index: (Idx, Idx)) -> &mut Self::Output {
-            let (i, j) = index;
-            &mut self.table[i][j]
-        }
-    }
-
-    impl std::fmt::Display for TwoD {
-        fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-            for row in &self.table {
-                for val in row {
-                    let _ = write!(f, "{} ", val);
-                }
-                let _ = write!(f, "\n");
-            }
-            Ok(())
-        }
-    }
-
-    #[cfg(test)]
-    mod tests {
-        use super::*;
-
-        #[test]
-        fn test_round_down_offset() {
-            assert_eq!(0, round_down_offset(1));
-            assert_eq!(1, round_down_offset(2));
-            assert_eq!(1, round_down_offset(3));
-            assert_eq!(2, round_down_offset(4));
-            assert_eq!(2, round_down_offset(5));
-            assert_eq!(2, round_down_offset(6));
-            assert_eq!(2, round_down_offset(7));
-            assert_eq!(3, round_down_offset(8));
-            assert_eq!(3, round_down_offset(9));
-        }
-
-        #[test]
-        fn test_adjusted_index() {
-            let (k, ii) = adjusted_index(0, 1);
-            assert_eq!(k, 0);
-            assert_eq!(ii, 0);
-
-            let (k, ii) = adjusted_index(0, 2);
-            assert_eq!(k, 1);
-            assert_eq!(ii, 0);
-
-            let (k, ii) = adjusted_index(0, 3);
-            assert_eq!(k, 1);
-            assert_eq!(ii, 1);
-
-            let (k, ii) = adjusted_index(0, 4);
-            assert_eq!(k, 2);
-            assert_eq!(ii, 0);
-
-            let (k, ii) = adjusted_index(0, 5);
-            assert_eq!(k, 2);
-            assert_eq!(ii, 1);
-
-            let (k, ii) = adjusted_index(0, 6);
-            assert_eq!(k, 2);
-            assert_eq!(ii, 2);
-
-            let (k, ii) = adjusted_index(0, 7);
-            assert_eq!(k, 2);
-            assert_eq!(ii, 3);
-
-            let (k, ii) = adjusted_index(0, 8);
-            assert_eq!(k, 3);
-            assert_eq!(ii, 0);
-
-            let (k, ii) = adjusted_index(1, 8);
-            assert_eq!(k, 2);
-            assert_eq!(ii, 4);
-
-            let (k, ii) = adjusted_index(1, 9);
-            assert_eq!(k, 3);
-            assert_eq!(ii, 1);
-        }
-
-        #[test]
-        fn test_2d() {
-            let n = 5;
-            let mut tbl = TwoD::new(n);
-            println!("{}", tbl);
-
-            for i in 0..n {
-                for j in i + 1..n + 1 {
-                    let (k, _) = adjusted_index(i, j);
-                    assert_eq!(0, tbl[(i, k)]);
-                }
-            }
-
-            for i in 0..n {
-                for j in i + 1..n + 1 {
-                    // This is just saving the largest matching j
-                    // in the entry those js should go to
-                    let (k, _) = adjusted_index(i, j);
-                    println!("({},{}) to offset {}", i, j, k);
-                    tbl[(i, k)] = j;
-                }
-            }
-            println!("{}", tbl);
-            for i in 0..n {
-                for j in i + 1..n + 1 {
-                    let (k, _) = adjusted_index(i, j);
-                    println!("({},{}): {} <? {}", i, j, j, tbl[(i, k)]);
-                    assert!(j <= tbl[(i, k)]);
-                }
-            }
-        }
-    }
-}
-
-use power_table::{adjusted_index, log, TwoD};
-
 /// RMQ table that tabulates all [i,i+2^k] ranges (there are O(n log n)),
 /// form which we can get the RMQ from the table by splitting [i,j) into
 /// two, [i,2^k) and [j-2^k,j) (where k is the largest such k). We can get
 /// the RMQ from those two intervals with a table lookup in O(1) and then
 /// pick the one of those with the smallest value.
 /// The result is O(n log n) preprocessing and O(1) lookup.
-struct PowerRMQ {
+pub struct PowerRMQImpl {
     lcp: Vec<Val>,
     tbl: TwoD,
 }
-adapt_index!(PowerRMQ); // Hack
 
-impl RMQArray for PowerRMQ {
-    fn new(lcp: Vec<u32>) -> PowerRMQ {
+impl RMQArrayImpl for PowerRMQImpl {
+    fn new(lcp: Vec<u32>) -> PowerRMQImpl {
         let n = lcp.len();
-        let logn = log(n);
+        let logn = log2_up(n);
         let mut tbl = TwoD::new(n);
         for i in 0..n {
             tbl[(i, 0)] = i;
@@ -340,7 +123,7 @@ impl RMQArray for PowerRMQ {
                 tbl[(i, k)] = if v1 <= v2 { i1 } else { i2 }
             }
         }
-        PowerRMQ { lcp, tbl }
+        PowerRMQImpl { lcp, tbl }
     }
     fn len(&self) -> Idx {
         self.lcp.len()
@@ -365,6 +148,8 @@ impl RMQArray for PowerRMQ {
         }
     }
 }
+
+pub type PowerRMQ = RMQArray_<PowerRMQImpl>;
 
 #[cfg(test)]
 mod tests {
