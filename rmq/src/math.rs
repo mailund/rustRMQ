@@ -38,6 +38,24 @@ pub fn log2_up(n: Idx) -> Idx {
     max(1, k + add)
 }
 
+/// For n and block size bs, compute (r,r*n) where r
+/// is n/bs rounded down. That is, r is n divided by bs
+/// rounded down, and r*bs is n adjusted downwards to the
+/// closest multiple of bs.
+pub fn round_down(n: Idx, bs: usize) -> (Idx, Idx) {
+    let r = n / bs;
+    (r, r * bs)
+}
+
+/// For n and block size bs, compute (r,r*n) where r
+/// is n/bs rounded up. That is, r is n divided by bs
+/// rounded down, and r*bs is n adjusted upwards to the
+/// closest multiple of bs.
+pub fn round_up(n: Idx, bs: usize) -> (Idx, Idx) {
+    let r = (n + bs - 1) / bs;
+    (r, r * bs)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -100,5 +118,29 @@ mod tests {
             assert_eq!(log2_up(i), k);
             assert_eq!(log2_down(i), k);
         }
+    }
+
+    #[test]
+    fn test_round() {
+        let bs = 4;
+        assert_eq!((0, 0), round_down(0, bs));
+        assert_eq!((0, 0), round_up(0, bs));
+        assert_eq!((0, 0), round_down(1, bs));
+        assert_eq!((1, 4), round_up(1, bs));
+
+        assert_eq!((0, 0), round_down(2, bs));
+        assert_eq!((1, 4), round_up(2, bs));
+
+        assert_eq!((0, 0), round_down(3, bs));
+        assert_eq!((1, 4), round_up(3, bs));
+
+        assert_eq!((1, 4), round_down(4, bs));
+        assert_eq!((1, 4), round_up(4, bs));
+
+        assert_eq!((1, 4), round_down(5, bs));
+        assert_eq!((2, 8), round_up(5, bs));
+
+        assert_eq!((1, 4), round_down(6, bs));
+        assert_eq!((2, 8), round_up(6, bs));
     }
 }
