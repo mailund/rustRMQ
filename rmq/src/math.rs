@@ -1,3 +1,13 @@
+//! The log functions in this module requires that the index is at least 1
+//! since log(0) is not well-defined. This works out well, though, since we
+//! use them for j in intervals [i,j) where j > i, so j >= 1. For allocating
+//! memory for tables that address in log-space, however, it means that
+//! if you want to index k (j == 2^k+jj) you need at least k entries, so
+//! you cannot use log2_up when j is a power of two (log2_up(2^k) == k)
+//! as this will be one too little. To allocate memory, use log_table_size(j)
+//! which will be log2_down(j) + 1. When j is not a power of two, this is
+//! the same as log2_up(j), but for powers of two, it adds the extra entry.
+
 use super::Idx;
 use std::cmp::max;
 
@@ -8,10 +18,14 @@ pub fn power_of_two(x: Idx) -> bool {
 
 /// Get k such that 2**k is j rounded down to the
 /// nearest power of 2.
-/// We don't handle zero, because it is a special case
-/// and we don't need to round down zero.
+/// j=1=2^0 => 0
+/// j=2=2^1 => 1
+/// j=3=2^1+1 => 1
+/// j=4=2^2 => 2
+/// and so on.
 pub fn log2_down(j: Idx) -> Idx {
-    assert!(j != 0);
+    assert!(j != 0); // not defined for zero
+
     // Rounded down means finding the index of the first
     // 1 in the bit-pattern. If j = 00010101110
     // then 00010000000 (only first bit) is the closest
@@ -27,7 +41,7 @@ pub fn log2_down(j: Idx) -> Idx {
 /// For n, get (rounded up) log2(n).
 /// We need this function for computing the size of tables with
 /// log(n) entries. Although n=1 = 2^0, we can't use zero
-/// for a table that must contain at least one element, se we
+/// for a table that must contain at least one element, so we
 /// always return at least 1.
 pub fn log2_up(n: Idx) -> Idx {
     // Round down, but add one if n is not a power of two.
@@ -36,6 +50,10 @@ pub fn log2_up(n: Idx) -> Idx {
     let k = log2_down(n);
     let add = !power_of_two(n) as Idx; // 1 if n is not a power of two.
     max(1, k + add)
+}
+
+pub fn log_table_size(n: Idx) -> Idx {
+    log2_down(n) + 1
 }
 
 /// For n and block size bs, compute (r,r*n) where r
@@ -118,6 +136,19 @@ mod tests {
             assert_eq!(log2_up(i), k);
             assert_eq!(log2_down(i), k);
         }
+    }
+
+    #[test]
+    fn test_log_table_size() {
+        assert_eq!(1, log_table_size(1));
+        assert_eq!(2, log_table_size(2));
+        assert_eq!(2, log_table_size(3));
+        assert_eq!(3, log_table_size(4));
+        assert_eq!(3, log_table_size(5));
+        assert_eq!(3, log_table_size(6));
+        assert_eq!(3, log_table_size(7));
+        assert_eq!(4, log_table_size(8));
+        assert_eq!(4, log_table_size(9));
     }
 
     #[test]

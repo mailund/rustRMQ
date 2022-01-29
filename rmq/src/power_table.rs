@@ -1,4 +1,4 @@
-use super::math::{log2_down, log2_up};
+use super::math::{log2_down, log_table_size};
 use super::Idx;
 
 /// From range [i,j), get values (k,j-2^k) where k is the offset
@@ -18,7 +18,7 @@ pub struct TwoD {
 
 impl TwoD {
     pub fn new(n: Idx) -> TwoD {
-        let table = vec![vec![0; log2_up(n)]; n];
+        let table = vec![vec![0; log_table_size(n)]; n];
         TwoD { table }
     }
 }
@@ -55,32 +55,24 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_log2_down() {
-        assert_eq!(0, log2_down(1));
-        assert_eq!(1, log2_down(2));
-        assert_eq!(1, log2_down(3));
-        assert_eq!(2, log2_down(4));
-        assert_eq!(2, log2_down(5));
-        assert_eq!(2, log2_down(6));
-        assert_eq!(2, log2_down(7));
-        assert_eq!(3, log2_down(8));
-        assert_eq!(3, log2_down(9));
-    }
-
-    #[test]
     fn test_adjusted_index() {
+        // [0,0) is undefined; j must be larger than i
+        // [0,1) => offset=1=2^0, k=0, ii=1-2^k=0
         let (k, ii) = adjusted_index(0, 1);
         assert_eq!(k, 0);
         assert_eq!(ii, 0);
 
+        // [0,2) => offset=2=2^1, k=1, ii=2-2^1=0
         let (k, ii) = adjusted_index(0, 2);
         assert_eq!(k, 1);
         assert_eq!(ii, 0);
 
+        // [0,3) => offset=2, k=1 -- second offset; then ii=1
         let (k, ii) = adjusted_index(0, 3);
         assert_eq!(k, 1);
         assert_eq!(ii, 1);
 
+        // [0,4) => offset=4=2^2, k=2, ii=4-4=0
         let (k, ii) = adjusted_index(0, 4);
         assert_eq!(k, 2);
         assert_eq!(ii, 0);
