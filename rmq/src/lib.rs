@@ -12,29 +12,61 @@ use inter_table::InterTable;
 mod power_table;
 use power_table::{adjusted_index, TwoD};
 
+/// Wrap an expresson when it can't always be evaluated. Turns
+/// the result into an Option with Some() value when the operation
+/// is safe to perform and None when it isn't.
+macro_rules! lift {
+    ($when:expr,$call:expr) => {
+        if $when {
+            Some($call)
+        } else {
+            None
+        }
+    };
+}
+
+/// A point is an index with the corresponding value
+#[derive(Clone)]
+pub struct Point(Idx, Val);
+
+impl Point {
+    pub fn min(p1: Option<Point>, p2: Option<Point>) -> Option<Point> {
+        match (&p1, &p2) {
+            (&None, &None) => None,
+            (&Some(_), &None) => p1,
+            (&None, &Some(_)) => p2,
+            (&Some(Point(_, v1)), &Some(Point(_, v2))) => {
+                if v1 <= v2 {
+                    p1
+                } else {
+                    p2
+                }
+            }
+        }
+    }
+
+    pub fn min3(p1: Option<Point>, p2: Option<Point>, p3: Option<Point>) -> Point {
+        Point::min(Point::min(p1, p2), p3).unwrap()
+    }
+}
+
 /// Finds the left-most index with the smallest value in x.
 /// Returns the index of the left-most minimal value and the
 /// minimal value. If [i,j) is not a valid interval, you get None.
-// FIXME: Not sure if an Option is the right interface here, but
-// I want to avoid checking for special cases elsewhere where the
-// choice of [i,j) can be empty and the result isn't well defined.
-fn smallest_in_range(x: &[Val], i: Idx, j: Idx) -> Option<(Idx, Val)> {
-    if i < j {
-        let (pos, val) =
-            x[i..j]
-                .iter()
-                .enumerate()
-                .fold((0, std::u32::MAX as u32), |(k1, v1), (k2, v2)| {
-                    if v1 <= *v2 {
-                        (k1, v1)
-                    } else {
-                        (k2, *v2)
-                    }
-                });
-        Some((i + pos, val))
-    } else {
-        None
-    }
+fn smallest_in_range(x: &[Val], i: Idx, j: Idx) -> Point {
+    assert!(i < j);
+    let (pos, val) =
+        x[i..j]
+            .iter()
+            .enumerate()
+            .fold((0, std::u32::MAX as u32), |(k1, v1), (k2, v2)| {
+                if v1 <= *v2 {
+                    (k1, v1)
+                } else {
+                    (k2, *v2)
+                }
+            });
+    Point(i + pos, val)
 }
 
 /// Implements RMQ by running through the [i,j) interval
@@ -56,7 +88,7 @@ impl RMQArrayImpl for BruteForceRMQImpl {
         &self.values[index]
     }
     fn rmq(&self, i: Idx, j: Idx) -> Idx {
-        let (pos, _) = smallest_in_range(&self.values, i, j).unwrap();
+        let Point(pos, _) = smallest_in_range(&self.values, i, j);
         pos
     }
 }
@@ -159,28 +191,18 @@ impl RMQArrayImpl for PowerRMQImpl {
 pub type PowerRMQ = RMQArray_<PowerRMQImpl>;
 
 mod reduce {
-    use super::{smallest_in_range, Idx, Val};
+    use super::{smallest_in_range, Idx, Point, Val};
     pub fn reduce_array(x: &Vec<Val>, block_size: usize) -> (Vec<Idx>, Vec<Val>) {
         let mut indices: Vec<Idx> = Vec::new();
         let mut values: Vec<Val> = Vec::new();
         let no_blocks = x.len() / block_size;
         for block in 0..no_blocks {
-            let (pos, val) =
-                smallest_in_range(&x, block * block_size, (block + 1) * block_size).unwrap();
+            let Point(pos, val) =
+                smallest_in_range(&x, block * block_size, (block + 1) * block_size);
             indices.push(pos);
             values.push(val);
         }
         (indices, values)
-    }
-
-    pub fn pick_min(i1: Idx, i2: Idx, i3: Idx, v1: Val, v2: Val, v3: Val) -> Idx {
-        if v1 <= v2 && v1 <= v3 {
-            i1
-        } else if v2 <= v3 {
-            i2
-        } else {
-            i3
-        }
     }
 
     #[cfg(test)]
@@ -199,7 +221,7 @@ mod reduce {
     }
 }
 
-use reduce::{pick_min, reduce_array};
+use reduce::reduce_array;
 
 pub struct ReducedPowerRMQImpl {
     lcp: Vec<Val>,
@@ -235,17 +257,18 @@ impl RMQArrayImpl for ReducedPowerRMQImpl {
     fn rmq(&self, i: Idx, j: Idx) -> Idx {
         let (bi, ii) = round_up(i, self.block_size);
         let (bj, jj) = round_down(j, self.block_size);
-        let default = (i, self.lcp[i]);
-        if bi < bj {
-            let (i1, v1) = smallest_in_range(&self.lcp, i, ii).unwrap_or(default);
-            let ri = self.tbl.rmq(bi, bj);
-            let (i2, v2) = (self.reduced_index[ri], self.tbl.val(ri));
-            let (i3, v3) = smallest_in_range(&self.lcp, jj, j).unwrap_or(default);
-            pick_min(i1, i2, i3, v1, *v2, v3)
+        let Point(pos, _) = if bi < bj {
+            let p1 = lift!(i < ii, smallest_in_range(&self.lcp, i, ii));
+            let p2 = {
+                let ri = self.tbl.rmq(bi, bj);
+                Some(Point(self.reduced_index[ri], *self.tbl.val(ri)))
+            };
+            let p3 = lift!(jj < j, smallest_in_range(&self.lcp, jj, j));
+            Point::min3(p1, p2, p3)
         } else {
-            let (pos, _) = smallest_in_range(&self.lcp, i, j).unwrap();
-            pos
-        }
+            smallest_in_range(&self.lcp, i, j)
+        };
+        pos
     }
 }
 
@@ -359,7 +382,7 @@ mod tests {
                 if j > v.len() {
                     continue;
                 }
-                let (i1, _) = smallest_in_range(&v, i, j).unwrap();
+                let Point(i1, _) = smallest_in_range(&v, i, j);
                 let i2 = rmqa.rmq(i, j);
                 println!(
                     "[{},{}): {}, {}, [offset={}] {:?}",
