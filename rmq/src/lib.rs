@@ -12,61 +12,86 @@ use inter_table::InterTable;
 mod power_table;
 use power_table::{adjusted_index, TwoD};
 
-/// Wrap an expresson when it can't always be evaluated. Turns
-/// the result into an Option with Some() value when the operation
-/// is safe to perform and None when it isn't.
-macro_rules! lift {
-    ($when:expr,$call:expr) => {
-        if $when {
-            Some($call)
-        } else {
-            None
+/// Takes (a,b,op(a,b)) and lift it
+macro_rules! lift_binop {
+    ($a:ident, $b:ident, $expr:expr) => {
+        match (&$a, &$b) {
+            (&None, &None) => None,
+            (&Some(_), &None) => $a,
+            (&None, &Some(_)) => $b,
+            (&Some($a), &Some($b)) => Some($expr),
         }
     };
 }
 
+pub trait Min {
+    fn min(a: Self, b: Self) -> Self;
+}
+
+#[inline]
+pub fn min<T: Min>(a: T, b: T) -> T {
+    T::min(a, b)
+}
+
+#[inline]
+pub fn min3<T: Min>(a: T, b: T, c: T) -> T {
+    T::min(T::min(a, b), c)
+}
+
+// Lift min to Option<T>
+impl<T> Min for Option<T>
+where
+    T: Min + Copy,
+{
+    #[inline]
+    fn min(a: Self, b: Self) -> Self {
+        lift_binop!(a, b, T::min(a, b))
+    }
+}
+
 /// A point is an index with the corresponding value
-#[derive(Clone)]
+#[derive(Clone, Copy)]
 pub struct Point(Idx, Val);
 
 impl Point {
-    pub fn min(p1: Option<Point>, p2: Option<Point>) -> Option<Point> {
-        match (&p1, &p2) {
-            (&None, &None) => None,
-            (&Some(_), &None) => p1,
-            (&None, &Some(_)) => p2,
-            (&Some(Point(_, v1)), &Some(Point(_, v2))) => {
-                if v1 <= v2 {
-                    p1
-                } else {
-                    p2
-                }
-            }
-        }
+    #[inline]
+    pub fn idx(&self) -> Idx {
+        self.0
     }
+    #[inline]
+    pub fn val(&self) -> Val {
+        self.1
+    }
+}
 
-    pub fn min3(p1: Option<Point>, p2: Option<Point>, p3: Option<Point>) -> Point {
-        Point::min(Point::min(p1, p2), p3).unwrap()
+impl Min for Point {
+    #[inline]
+    fn min(p1: Point, p2: Point) -> Point {
+        match p1.val() <= p2.val() {
+            true => p1,
+            false => p2,
+        }
     }
 }
 
 /// Finds the left-most index with the smallest value in x.
 /// Returns the index of the left-most minimal value and the
-/// minimal value. If [i,j) is not a valid interval, you get None.
-fn smallest_in_range(x: &[Val], i: Idx, j: Idx) -> Point {
-    assert!(i < j);
-    let (pos, val) =
-        x[i..j]
-            .iter()
-            .enumerate()
-            .fold((0, std::u32::MAX as u32), |(k1, v1), (k2, v2)| {
-                if v1 <= *v2 {
-                    (k1, v1)
-                } else {
-                    (k2, *v2)
-                }
-            });
-    Point(i + pos, val)
+/// minimal value. If [i,j) is not a valid interval, you ged
+/// None.
+fn smallest_in_range(x: &[Val], i: Idx, j: Idx) -> Option<Point> {
+    let y = &x[i..j];
+    let min_val = y.iter().min()?;
+    let pos = i + y.iter().position(|a| a == min_val)?;
+    Some(Point(pos, *min_val))
+}
+
+/// Picks the index with the smallest value
+#[inline]
+fn select_index(x: &[Val], i: Idx, j: Idx) -> Idx {
+    match x[i] <= x[j] {
+        true => i,
+        false => j,
+    }
 }
 
 /// Implements RMQ by running through the [i,j) interval
@@ -88,8 +113,7 @@ impl RMQArrayImpl for BruteForceRMQImpl {
         &self.values[index]
     }
     fn rmq(&self, i: Idx, j: Idx) -> Idx {
-        let Point(pos, _) = smallest_in_range(&self.values, i, j);
-        pos
+        smallest_in_range(&self.values, i, j).unwrap().idx()
     }
 }
 
@@ -113,9 +137,7 @@ impl RMQArrayImpl for FullTabulateRMQImpl {
         for i in 0..values.len() - 1 {
             for j in i + 2..values.len() + 1 {
                 let k = rmq[(i, j - 1)];
-                let v1 = values[k];
-                let v2 = values[j - 1];
-                rmq[(i, j)] = if v1 <= v2 { k } else { j - 1 }
+                rmq[(i, j)] = select_index(&values, k, j - 1)
             }
         }
         FullTabulateRMQImpl { values, rmq }
@@ -157,9 +179,7 @@ impl RMQArrayImpl for PowerRMQImpl {
             for i in 0..(n - k) {
                 let i1 = tbl[(i, k - 1)];
                 let i2 = tbl[(i + k, k - 1)];
-                let v1 = lcp[i1];
-                let v2 = lcp[i2];
-                tbl[(i, k)] = if v1 <= v2 { i1 } else { i2 }
+                tbl[(i, k)] = select_index(&lcp, i1, i2)
             }
         }
         PowerRMQImpl { lcp, tbl }
@@ -178,13 +198,7 @@ impl RMQArrayImpl for PowerRMQImpl {
         let (k, ii) = adjusted_index(i, j);
         let i1 = self.tbl[(i, k)];
         let i2 = self.tbl[(ii, k)];
-        let v1 = self.lcp[i1];
-        let v2 = self.lcp[i2];
-        if v1 <= v2 {
-            i1
-        } else {
-            i2
-        }
+        select_index(&self.lcp, i1, i2)
     }
 }
 
@@ -197,8 +211,9 @@ mod reduce {
         let mut values: Vec<Val> = Vec::new();
         let no_blocks = x.len() / block_size;
         for block in 0..no_blocks {
-            let Point(pos, val) =
-                smallest_in_range(&x, block * block_size, (block + 1) * block_size);
+            let block_start = block * block_size;
+            let block_end = block_start + block_size;
+            let Point(pos, val) = smallest_in_range(&x, block_start, block_end).unwrap();
             indices.push(pos);
             values.push(val);
         }
@@ -257,18 +272,19 @@ impl RMQArrayImpl for ReducedPowerRMQImpl {
     fn rmq(&self, i: Idx, j: Idx) -> Idx {
         let (bi, ii) = round_up(i, self.block_size);
         let (bj, jj) = round_down(j, self.block_size);
-        let Point(pos, _) = if bi < bj {
-            let p1 = lift!(i < ii, smallest_in_range(&self.lcp, i, ii));
+        if bi < bj {
+            let p1 = smallest_in_range(&self.lcp, i, ii);
             let p2 = {
                 let ri = self.tbl.rmq(bi, bj);
                 Some(Point(self.reduced_index[ri], *self.tbl.val(ri)))
             };
-            let p3 = lift!(jj < j, smallest_in_range(&self.lcp, jj, j));
-            Point::min3(p1, p2, p3)
+            let p3 = smallest_in_range(&self.lcp, jj, j);
+            min3(p1, p2, p3)
         } else {
             smallest_in_range(&self.lcp, i, j)
-        };
-        pos
+        }
+        .unwrap()
+        .idx()
     }
 }
 
@@ -382,7 +398,7 @@ mod tests {
                 if j > v.len() {
                     continue;
                 }
-                let Point(i1, _) = smallest_in_range(&v, i, j);
+                let i1 = smallest_in_range(&v, i, j).unwrap().idx();
                 let i2 = rmqa.rmq(i, j);
                 println!(
                     "[{},{}): {}, {}, [offset={}] {:?}",
