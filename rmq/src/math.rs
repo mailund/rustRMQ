@@ -16,6 +16,36 @@ pub fn power_of_two(x: Idx) -> bool {
     (x == 0) || ((x & (x - 1)) == 0)
 }
 
+/// Type for powers of two, 2^k. Contains k, but wrapped in
+/// a type so we don't confuse log-space with linear space.
+#[derive(Debug, Clone, Copy)]
+pub struct Pow(pub Idx);
+
+impl std::cmp::PartialEq for Pow {
+    fn eq(&self, other: &Pow) -> bool {
+        self.0 == other.0
+    }
+}
+
+impl std::fmt::Display for Pow {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        write!(f, "2^{}", self.0)
+    }
+}
+
+impl Pow {
+    /// for a power Pow(k) get 2^k.
+    #[inline]
+    pub fn value(&self) -> Idx {
+        1 << self.0
+    }
+    /// for a power Pow(k) get k.
+    #[inline]
+    pub fn exponent(&self) -> Idx {
+        self.0
+    }
+}
+
 /// Get k such that 2**k is j rounded down to the
 /// nearest power of 2.
 /// j=1=2^0 => 0
@@ -23,7 +53,7 @@ pub fn power_of_two(x: Idx) -> bool {
 /// j=3=2^1+1 => 1
 /// j=4=2^2 => 2
 /// and so on.
-pub fn log2_down(j: Idx) -> Idx {
+pub fn log2_down(j: Idx) -> Pow {
     assert!(j != 0); // not defined for zero
 
     // Rounded down means finding the index of the first
@@ -33,7 +63,7 @@ pub fn log2_down(j: Idx) -> Idx {
     // j.leading_zeros() counts the number of leading zeros
     // and we get the index by subtracting this
     // from the total number of bits minus one.
-    (Idx::BITS - j.leading_zeros() - 1) as Idx
+    Pow((Idx::BITS - j.leading_zeros() - 1) as Idx)
     // Idx::BITS and j.leading_zeros() will be u32, so
     // we cast the result back to Idx.
 }
@@ -43,17 +73,21 @@ pub fn log2_down(j: Idx) -> Idx {
 /// log(n) entries. Although n=1 = 2^0, we can't use zero
 /// for a table that must contain at least one element, so we
 /// always return at least 1.
-pub fn log2_up(n: Idx) -> Idx {
+pub fn log2_up(n: Idx) -> Pow {
     // Round down, but add one if n is not a power of two.
     // We have to always return at least 1, to handle arrays of length
     // one, even though 1 = 2^0 is a power of two.
-    let k = log2_down(n);
+    let Pow(k) = log2_down(n);
     let add = !power_of_two(n) as Idx; // 1 if n is not a power of two.
-    max(1, k + add)
+    Pow(max(1, k + add))
 }
 
-pub fn log_table_size(n: Idx) -> Idx {
-    log2_down(n) + 1
+/// We always have to add one to the exponent, because in log-space
+/// we are working with 1-indexed (0-indexed in log-space) values,
+/// so to have a table that can handle maximum value k, we need k+1
+/// entires. That is what this function gives us.
+pub fn log_table_size(n: Idx) -> Pow {
+    Pow(log2_down(n).exponent() + 1)
 }
 
 /// For n and block size bs, compute (r,r*n) where r
@@ -95,60 +129,60 @@ mod tests {
 
     #[test]
     fn test_log2_down() {
-        assert_eq!(0, log2_down(1));
-        assert_eq!(1, log2_down(2));
-        assert_eq!(1, log2_down(3));
-        assert_eq!(2, log2_down(4));
-        assert_eq!(2, log2_down(5));
-        assert_eq!(2, log2_down(6));
-        assert_eq!(2, log2_down(7));
-        assert_eq!(3, log2_down(8));
-        assert_eq!(3, log2_down(9));
+        assert_eq!(Pow(0), log2_down(1));
+        assert_eq!(Pow(1), log2_down(2));
+        assert_eq!(Pow(1), log2_down(3));
+        assert_eq!(Pow(2), log2_down(4));
+        assert_eq!(Pow(2), log2_down(5));
+        assert_eq!(Pow(2), log2_down(6));
+        assert_eq!(Pow(2), log2_down(7));
+        assert_eq!(Pow(3), log2_down(8));
+        assert_eq!(Pow(3), log2_down(9));
         for i in 1..100 {
             let k = log2_down(i);
-            assert_le!(1 << k, i);
+            assert_le!(k.value(), i);
             if power_of_two(i) {
-                assert_eq!(i, 1 << k);
+                assert_eq!(i, k.value());
             }
         }
     }
 
     #[test]
     fn test_log2_up() {
-        assert_eq!(1, log2_up(1));
-        assert_eq!(1, log2_up(2));
-        assert_eq!(2, log2_up(3));
-        assert_eq!(2, log2_up(4));
-        assert_eq!(3, log2_up(5));
-        assert_eq!(3, log2_up(6));
-        assert_eq!(3, log2_up(7));
-        assert_eq!(3, log2_up(8));
-        assert_eq!(4, log2_up(9));
+        assert_eq!(1, log2_up(1).exponent());
+        assert_eq!(1, log2_up(2).exponent());
+        assert_eq!(2, log2_up(3).exponent());
+        assert_eq!(2, log2_up(4).exponent());
+        assert_eq!(3, log2_up(5).exponent());
+        assert_eq!(3, log2_up(6).exponent());
+        assert_eq!(3, log2_up(7).exponent());
+        assert_eq!(3, log2_up(8).exponent());
+        assert_eq!(4, log2_up(9).exponent());
         for i in 1..100 {
             let k = log2_up(i);
-            assert_le!(i, 1 << k);
+            assert_le!(i, k.value());
             if i > 1 && power_of_two(i) {
-                assert_eq!(i, 1 << k);
+                assert_eq!(i, k.value());
             }
         }
         for k in 2..10 {
             let i = 1 << k;
-            assert_eq!(log2_up(i), k);
-            assert_eq!(log2_down(i), k);
+            assert_eq!(log2_up(i).exponent(), k);
+            assert_eq!(log2_down(i).exponent(), k);
         }
     }
 
     #[test]
     fn test_log_table_size() {
-        assert_eq!(1, log_table_size(1));
-        assert_eq!(2, log_table_size(2));
-        assert_eq!(2, log_table_size(3));
-        assert_eq!(3, log_table_size(4));
-        assert_eq!(3, log_table_size(5));
-        assert_eq!(3, log_table_size(6));
-        assert_eq!(3, log_table_size(7));
-        assert_eq!(4, log_table_size(8));
-        assert_eq!(4, log_table_size(9));
+        assert_eq!(Pow(1), log_table_size(1));
+        assert_eq!(Pow(2), log_table_size(2));
+        assert_eq!(Pow(2), log_table_size(3));
+        assert_eq!(Pow(3), log_table_size(4));
+        assert_eq!(Pow(3), log_table_size(5));
+        assert_eq!(Pow(3), log_table_size(6));
+        assert_eq!(Pow(3), log_table_size(7));
+        assert_eq!(Pow(4), log_table_size(8));
+        assert_eq!(Pow(4), log_table_size(9));
     }
 
     #[test]

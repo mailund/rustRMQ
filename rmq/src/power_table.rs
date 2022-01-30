@@ -1,12 +1,12 @@
-use super::math::{log2_down, log_table_size};
+use super::math::{log2_down, log_table_size, Pow};
 use super::Idx;
 
 /// From range [i,j), get values (k,j-2^k) where k is the offset
 /// into the TwoD table to look up the value for [i,i+2^k) and [j-2^k,j)
 /// from which we can get the RMQ.
-pub fn adjusted_index(i: Idx, j: Idx) -> (Idx, Idx) {
+pub fn adjusted_index(i: Idx, j: Idx) -> (Pow, Idx) {
     let k = log2_down(j - i);
-    (k, j - (1 << k))
+    (k, j - k.value())
 }
 
 /// A rather simple 2D array made from vectors of vectors.
@@ -18,23 +18,23 @@ pub struct TwoD {
 
 impl TwoD {
     pub fn new(n: Idx) -> TwoD {
-        let table = vec![vec![0; log_table_size(n)]; n];
+        let table = vec![vec![0; log_table_size(n).exponent()]; n];
         TwoD { table }
     }
 }
 
-impl std::ops::Index<(Idx, Idx)> for TwoD {
+impl std::ops::Index<(Idx, Pow)> for TwoD {
     type Output = Idx;
-    fn index(&self, index: (Idx, Idx)) -> &Self::Output {
-        let (i, j) = index;
-        &self.table[i][j]
+    fn index(&self, index: (Idx, Pow)) -> &Self::Output {
+        let (i, k) = index;
+        &self.table[i][k.exponent()]
     }
 }
 
-impl std::ops::IndexMut<(Idx, Idx)> for TwoD {
-    fn index_mut(&mut self, index: (Idx, Idx)) -> &mut Self::Output {
-        let (i, j) = index;
-        &mut self.table[i][j]
+impl std::ops::IndexMut<(Idx, Pow)> for TwoD {
+    fn index_mut(&mut self, index: (Idx, Pow)) -> &mut Self::Output {
+        let (i, k) = index;
+        &mut self.table[i][k.exponent()]
     }
 }
 
@@ -58,46 +58,46 @@ mod tests {
     fn test_adjusted_index() {
         // [0,0) is undefined; j must be larger than i
         // [0,1) => offset=1=2^0, k=0, ii=1-2^k=0
-        let (k, ii) = adjusted_index(0, 1);
+        let (Pow(k), ii) = adjusted_index(0, 1);
         assert_eq!(k, 0);
         assert_eq!(ii, 0);
 
         // [0,2) => offset=2=2^1, k=1, ii=2-2^1=0
-        let (k, ii) = adjusted_index(0, 2);
+        let (Pow(k), ii) = adjusted_index(0, 2);
         assert_eq!(k, 1);
         assert_eq!(ii, 0);
 
         // [0,3) => offset=2, k=1 -- second offset; then ii=1
-        let (k, ii) = adjusted_index(0, 3);
+        let (Pow(k), ii) = adjusted_index(0, 3);
         assert_eq!(k, 1);
         assert_eq!(ii, 1);
 
         // [0,4) => offset=4=2^2, k=2, ii=4-4=0
-        let (k, ii) = adjusted_index(0, 4);
+        let (Pow(k), ii) = adjusted_index(0, 4);
         assert_eq!(k, 2);
         assert_eq!(ii, 0);
 
-        let (k, ii) = adjusted_index(0, 5);
+        let (Pow(k), ii) = adjusted_index(0, 5);
         assert_eq!(k, 2);
         assert_eq!(ii, 1);
 
-        let (k, ii) = adjusted_index(0, 6);
+        let (Pow(k), ii) = adjusted_index(0, 6);
         assert_eq!(k, 2);
         assert_eq!(ii, 2);
 
-        let (k, ii) = adjusted_index(0, 7);
+        let (Pow(k), ii) = adjusted_index(0, 7);
         assert_eq!(k, 2);
         assert_eq!(ii, 3);
 
-        let (k, ii) = adjusted_index(0, 8);
+        let (Pow(k), ii) = adjusted_index(0, 8);
         assert_eq!(k, 3);
         assert_eq!(ii, 0);
 
-        let (k, ii) = adjusted_index(1, 8);
+        let (Pow(k), ii) = adjusted_index(1, 8);
         assert_eq!(k, 2);
         assert_eq!(ii, 4);
 
-        let (k, ii) = adjusted_index(1, 9);
+        let (Pow(k), ii) = adjusted_index(1, 9);
         assert_eq!(k, 3);
         assert_eq!(ii, 1);
     }

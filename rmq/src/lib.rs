@@ -1,53 +1,13 @@
 mod math;
-use math::{log2_up, log_table_size, round_down, round_up};
+use math::{log2_up, log_table_size, round_down, round_up, Pow};
 
 mod rmq_array;
 #[allow(unused_imports)] // Importing RMQArray to expose it; I don't use it here
 use rmq_array::RMQArray;
 use rmq_array::{Idx, RMQArrayImpl, RMQArray_, Val};
 
-mod inter_table;
-use inter_table::InterTable;
-
-mod power_table;
-use power_table::{adjusted_index, TwoD};
-
-/// Takes (a,b,op(a,b)) and lift it
-macro_rules! lift_binop {
-    ($a:ident, $b:ident, $expr:expr) => {
-        match (&$a, &$b) {
-            (&None, &None) => None,
-            (&Some(_), &None) => $a,
-            (&None, &Some(_)) => $b,
-            (&Some($a), &Some($b)) => Some($expr),
-        }
-    };
-}
-
-pub trait Min {
-    fn min(a: Self, b: Self) -> Self;
-}
-
-#[inline]
-pub fn min<T: Min>(a: T, b: T) -> T {
-    T::min(a, b)
-}
-
-#[inline]
-pub fn min3<T: Min>(a: T, b: T, c: T) -> T {
-    T::min(T::min(a, b), c)
-}
-
-// Lift min to Option<T>
-impl<T> Min for Option<T>
-where
-    T: Min + Copy,
-{
-    #[inline]
-    fn min(a: Self, b: Self) -> Self {
-        lift_binop!(a, b, T::min(a, b))
-    }
-}
+mod cmp;
+use cmp::{min3, Min};
 
 /// A point is an index with the corresponding value
 #[derive(Clone, Copy)]
@@ -117,6 +77,9 @@ impl RMQArrayImpl for BruteForceRMQImpl {
     }
 }
 
+mod inter_table;
+use inter_table::InterTable;
+
 pub type BruteForceRMQ = RMQArray_<BruteForceRMQImpl>;
 
 /// Implements RMQ by table lookup. Has a complete table of all [i,j),
@@ -136,7 +99,10 @@ impl RMQArrayImpl for FullTabulateRMQImpl {
         }
         for i in 0..values.len() - 1 {
             for j in i + 2..values.len() + 1 {
-                let k = rmq[(i, j - 1)];
+                // Dynamic programming:
+                // Min val in [i,j) is either min in [i,j-1) or
+                // [j-1,j) (i.e. index j-1).
+                let k = rmq[(i, j - 1)]; // best to the left
                 rmq[(i, j)] = select_index(&values, k, j - 1)
             }
         }
@@ -153,6 +119,9 @@ impl RMQArrayImpl for FullTabulateRMQImpl {
     }
 }
 
+mod power_table;
+use power_table::{adjusted_index, TwoD};
+
 /// RMQ table that tabulates all [i,i+2^k] ranges (there are O(n log n)),
 /// form which we can get the RMQ from the table by splitting [i,j) into
 /// two, [i,2^k) and [j-2^k,j) (where k is the largest such k). We can get
@@ -167,19 +136,19 @@ pub struct PowerRMQImpl {
 impl RMQArrayImpl for PowerRMQImpl {
     fn new(lcp: Vec<u32>) -> PowerRMQImpl {
         let n = lcp.len();
-        let logn = log_table_size(n);
+        let logn = log_table_size(n).exponent();
         let mut tbl = TwoD::new(n);
         for i in 0..n {
-            tbl[(i, 0)] = i;
+            tbl[(i, Pow(0))] = i;
         }
         // Dynamic programming construction of tables of increasing length.
         // We have O(log n) runs of the outer loop and O(n) of the inner,
         // so the total time is O(n log n).
         for k in 1..logn {
             for i in 0..(n - k) {
-                let i1 = tbl[(i, k - 1)];
-                let i2 = tbl[(i + k, k - 1)];
-                tbl[(i, k)] = select_index(&lcp, i1, i2)
+                let i1 = tbl[(i, Pow(k - 1))];
+                let i2 = tbl[(i + k, Pow(k - 1))];
+                tbl[(i, Pow(k))] = select_index(&lcp, i1, i2)
             }
         }
         PowerRMQImpl { lcp, tbl }
@@ -204,38 +173,7 @@ impl RMQArrayImpl for PowerRMQImpl {
 
 pub type PowerRMQ = RMQArray_<PowerRMQImpl>;
 
-mod reduce {
-    use super::{smallest_in_range, Idx, Point, Val};
-    pub fn reduce_array(x: &Vec<Val>, block_size: usize) -> (Vec<Idx>, Vec<Val>) {
-        let mut indices: Vec<Idx> = Vec::new();
-        let mut values: Vec<Val> = Vec::new();
-        let no_blocks = x.len() / block_size;
-        for block in 0..no_blocks {
-            let block_start = block * block_size;
-            let block_end = block_start + block_size;
-            let Point(pos, val) = smallest_in_range(&x, block_start, block_end).unwrap();
-            indices.push(pos);
-            values.push(val);
-        }
-        (indices, values)
-    }
-
-    #[cfg(test)]
-    mod tests {
-        use super::*;
-
-        #[test]
-        fn test_reduce() {
-            let bs = 3;
-            let v = vec![3, 2, 6, 1, 7, 3, 10, 1, 6, 2, 1, 7, 0, 2];
-            let (idx, val) = reduce_array(&v, bs);
-            for (i, &pos) in idx.iter().enumerate() {
-                assert_eq!(v[pos], val[i]);
-            }
-        }
-    }
-}
-
+mod reduce;
 use reduce::reduce_array;
 
 pub struct ReducedPowerRMQImpl {
@@ -251,8 +189,7 @@ pub struct ReducedPowerRMQImpl {
 /// in blocks of length log n. So, preprocessing O(n) and lookup O(log n).
 impl RMQArrayImpl for ReducedPowerRMQImpl {
     fn new(lcp: Vec<Val>) -> ReducedPowerRMQImpl {
-        let n = lcp.len();
-        let block_size = log2_up(n);
+        let block_size = log2_up(lcp.len()).exponent();
         let (reduced_index, reduced_values) = reduce_array(&lcp, block_size);
         let tbl = PowerRMQImpl::new(reduced_values);
         ReducedPowerRMQImpl {
