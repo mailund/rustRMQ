@@ -136,19 +136,31 @@ pub struct PowerRMQImpl {
 impl RMQArrayImpl for PowerRMQImpl {
     fn new(lcp: Vec<u32>) -> PowerRMQImpl {
         let n = lcp.len();
-        let logn = log_table_size(n).exponent();
+
+        // When tbl is a TwoD table, interpret tbl[i,Pow(k)] as containing
+        // values (at powers of two) in the range [i,i+2^k).
+        let Pow(logn) = log_table_size(n);
         let mut tbl = TwoD::new(n);
+
+        // Base case: intervals [i,i+1) = [i,i+2^0).
         for i in 0..n {
             tbl[(i, Pow(0))] = i;
         }
+
         // Dynamic programming construction of tables of increasing length.
         // We have O(log n) runs of the outer loop and O(n) of the inner,
         // so the total time is O(n log n).
         for k in 1..logn {
-            for i in 0..(n - k) {
-                let i1 = tbl[(i, Pow(k - 1))];
-                let i2 = tbl[(i + k, Pow(k - 1))];
-                tbl[(i, Pow(k))] = select_index(&lcp, i1, i2)
+            // i+ii is half-way in the interval [i,i+2^k); [i,i+2^k)=[i,i+2^{k-1})[i+2^{k-1},i+2^k).
+            for i in 0..(n - Pow(k - 1).value()) {
+                // Interval [i,i+2^k) = [i,i+2^{k-1}) [i+2^{k-1},(i+2^{k-1})+2^{k-1})
+                tbl[(i, Pow(k))] = select_index(
+                    &lcp,
+                    // [i,i+2^{k-1})
+                    tbl[(i, Pow(k - 1))],
+                    // [i+2^{k-1},(i+2^{k-1})+2^{k-1})
+                    tbl[(i + Pow(k - 1).value(), Pow(k - 1))],
+                );
             }
         }
         PowerRMQImpl { lcp, tbl }
@@ -164,9 +176,9 @@ impl RMQArrayImpl for PowerRMQImpl {
         // anything outside of [i,j). Then use the table to get the index with the smallest
         // lcp in those intervals, and pick the smaller of the two (with the first index
         // in case of a tie). All in O(1).
-        let (k, ii) = adjusted_index(i, j);
-        let i1 = self.tbl[(i, k)];
-        let i2 = self.tbl[(ii, k)];
+        let (p, ii) = adjusted_index(i, j);
+        let i1 = self.tbl[(i, p)];
+        let i2 = self.tbl[(ii, p)];
         select_index(&self.lcp, i1, i2)
     }
 }
@@ -298,6 +310,14 @@ mod tests {
         check_min(&rmqa);
         // Power of two
         let v = vec![2, 1, 2, 5, 3, 6, 1, 3, 7, 4, 2, 6, 3, 4, 7, 9];
+        let rmqa = R::new(v.clone());
+        check_min(&rmqa);
+        // Not power of two
+        let v = vec![2, 1, 2, 0, 2, 1, 3, 7, 4];
+        let rmqa = R::new(v.clone());
+        check_min(&rmqa);
+        // Power of two
+        let v = vec![2, 1, 2, 5, 3, 6, 1, 3];
         let rmqa = R::new(v.clone());
         check_min(&rmqa);
     }

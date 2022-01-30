@@ -9,7 +9,6 @@
 //! the same as log2_up(j), but for powers of two, it adds the extra entry.
 
 use super::Idx;
-use std::cmp::max;
 
 /// Tests if x is a power of two, x=2^k.
 pub fn power_of_two(x: Idx) -> bool {
@@ -22,8 +21,17 @@ pub fn power_of_two(x: Idx) -> bool {
 pub struct Pow(pub Idx);
 
 impl std::cmp::PartialEq for Pow {
+    #[inline]
     fn eq(&self, other: &Pow) -> bool {
         self.0 == other.0
+    }
+}
+
+impl std::ops::Add for Pow {
+    type Output = Pow;
+    fn add(self, rhs: Self) -> Self::Output {
+        let (Pow(k), Pow(kk)) = (self, rhs);
+        Pow(k + kk)
     }
 }
 
@@ -68,26 +76,23 @@ pub fn log2_down(j: Idx) -> Pow {
     // we cast the result back to Idx.
 }
 
-/// For n, get (rounded up) log2(n).
-/// We need this function for computing the size of tables with
-/// log(n) entries. Although n=1 = 2^0, we can't use zero
-/// for a table that must contain at least one element, so we
-/// always return at least 1.
-pub fn log2_up(n: Idx) -> Pow {
-    // Round down, but add one if n is not a power of two.
-    // We have to always return at least 1, to handle arrays of length
-    // one, even though 1 = 2^0 is a power of two.
-    let Pow(k) = log2_down(n);
-    let add = !power_of_two(n) as Idx; // 1 if n is not a power of two.
-    Pow(max(1, k + add))
-}
-
 /// We always have to add one to the exponent, because in log-space
 /// we are working with 1-indexed (0-indexed in log-space) values,
 /// so to have a table that can handle maximum value k, we need k+1
 /// entires. That is what this function gives us.
 pub fn log_table_size(n: Idx) -> Pow {
-    Pow(log2_down(n).exponent() + 1)
+    let Pow(k) = log2_down(n);
+    Pow(k + 1)
+}
+
+/// For n, get (rounded up) log2(n).
+pub fn log2_up(n: Idx) -> Pow {
+    // log_table_size(n) with n=2^k+m will always give us 2^{k+1},
+    // whether m is zero or not. We want 2^{k+1} when m > 0 and 2^k
+    // when m is zero, i.e. when n is a power of two.
+    // So we should subtract one from the exponent if n is a power of two.
+    let Pow(k) = log_table_size(n);
+    Pow(k - power_of_two(n) as Idx)
 }
 
 /// For n and block size bs, compute (r,r*n) where r
@@ -149,7 +154,7 @@ mod tests {
 
     #[test]
     fn test_log2_up() {
-        assert_eq!(1, log2_up(1).exponent());
+        assert_eq!(0, log2_up(1).exponent());
         assert_eq!(1, log2_up(2).exponent());
         assert_eq!(2, log2_up(3).exponent());
         assert_eq!(2, log2_up(4).exponent());

@@ -18,7 +18,8 @@ pub struct TwoD {
 
 impl TwoD {
     pub fn new(n: Idx) -> TwoD {
-        let table = vec![vec![0; log_table_size(n).exponent()]; n];
+        let Pow(logn) = log_table_size(n);
+        let table = vec![vec![0; logn]; n];
         TwoD { table }
     }
 }
@@ -26,15 +27,17 @@ impl TwoD {
 impl std::ops::Index<(Idx, Pow)> for TwoD {
     type Output = Idx;
     fn index(&self, index: (Idx, Pow)) -> &Self::Output {
-        let (i, k) = index;
-        &self.table[i][k.exponent()]
+        match index {
+            (i, Pow(k)) => &self.table[i][k],
+        }
     }
 }
 
 impl std::ops::IndexMut<(Idx, Pow)> for TwoD {
     fn index_mut(&mut self, index: (Idx, Pow)) -> &mut Self::Output {
-        let (i, k) = index;
-        &mut self.table[i][k.exponent()]
+        match index {
+            (i, Pow(k)) => &mut self.table[i][k],
+        }
     }
 }
 
