@@ -1,4 +1,4 @@
-use super::*;
+use super::interval::Idx;
 
 #[inline]
 fn flat_idx(i: Idx, j: Idx, n: Idx) -> Idx {

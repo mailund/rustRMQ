@@ -1,5 +1,5 @@
+use super::interval::Idx;
 use super::math::{log2_down, log_table_size, Pow};
-use super::Idx;
 
 /// From range [i,j), get values (k,j-2^k) where k is the offset
 /// into the TwoD table to look up the value for [i,i+2^k) and [j-2^k,j)

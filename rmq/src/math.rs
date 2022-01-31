@@ -8,7 +8,7 @@
 //! which will be log2_down(j) + 1. When j is not a power of two, this is
 //! the same as log2_up(j), but for powers of two, it adds the extra entry.
 
-use super::Idx;
+use super::interval::Idx;
 
 /// Tests if x is a power of two, x=2^k.
 pub fn power_of_two(x: Idx) -> bool {
@@ -27,11 +27,11 @@ impl std::cmp::PartialEq for Pow {
     }
 }
 
-impl std::ops::Add for Pow {
-    type Output = Pow;
-    fn add(self, rhs: Self) -> Self::Output {
-        let (Pow(k), Pow(kk)) = (self, rhs);
-        Pow(k + kk)
+impl std::cmp::PartialOrd for Pow {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        let Pow(i) = *self;
+        let Pow(j) = *other;
+        Some(i.cmp(&j))
     }
 }
 
@@ -46,11 +46,6 @@ impl Pow {
     #[inline]
     pub fn value(&self) -> Idx {
         1 << self.0
-    }
-    /// for a power Pow(k) get k.
-    #[inline]
-    pub fn exponent(&self) -> Idx {
-        self.0
     }
 }
 
@@ -95,22 +90,49 @@ pub fn log2_up(n: Idx) -> Pow {
     Pow(k - power_of_two(n) as Idx)
 }
 
+/// Type for indices into blocks. This is just a wrapper for an index,
+/// but helps us distinguish between when an index should be considered into
+/// a array of blocks and when it is not. Just a little type safety.
+#[derive(Debug, Clone, Copy)]
+pub struct BlockIdx(pub Idx);
+
+impl std::cmp::PartialEq for BlockIdx {
+    #[inline]
+    fn eq(&self, other: &BlockIdx) -> bool {
+        self.0 == other.0
+    }
+}
+
+impl std::cmp::PartialOrd for BlockIdx {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        let BlockIdx(i) = *self;
+        let BlockIdx(j) = *other;
+        Some(i.cmp(&j))
+    }
+}
+
+impl std::fmt::Display for BlockIdx {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        write!(f, "[{}]", self.0)
+    }
+}
+
 /// For n and block size bs, compute (r,r*n) where r
 /// is n/bs rounded down. That is, r is n divided by bs
 /// rounded down, and r*bs is n adjusted downwards to the
 /// closest multiple of bs.
-pub fn round_down(n: Idx, bs: usize) -> (Idx, Idx) {
+pub fn round_down(n: Idx, bs: usize) -> (BlockIdx, Idx) {
     let r = n / bs;
-    (r, r * bs)
+    (BlockIdx(r), r * bs)
 }
 
 /// For n and block size bs, compute (r,r*n) where r
 /// is n/bs rounded up. That is, r is n divided by bs
 /// rounded down, and r*bs is n adjusted upwards to the
 /// closest multiple of bs.
-pub fn round_up(n: Idx, bs: usize) -> (Idx, Idx) {
+pub fn round_up(n: Idx, bs: usize) -> (BlockIdx, Idx) {
     let r = (n + bs - 1) / bs;
-    (r, r * bs)
+    (BlockIdx(r), r * bs)
 }
 
 #[cfg(test)]
@@ -154,15 +176,15 @@ mod tests {
 
     #[test]
     fn test_log2_up() {
-        assert_eq!(0, log2_up(1).exponent());
-        assert_eq!(1, log2_up(2).exponent());
-        assert_eq!(2, log2_up(3).exponent());
-        assert_eq!(2, log2_up(4).exponent());
-        assert_eq!(3, log2_up(5).exponent());
-        assert_eq!(3, log2_up(6).exponent());
-        assert_eq!(3, log2_up(7).exponent());
-        assert_eq!(3, log2_up(8).exponent());
-        assert_eq!(4, log2_up(9).exponent());
+        assert_eq!(Pow(0), log2_up(1));
+        assert_eq!(Pow(1), log2_up(2));
+        assert_eq!(Pow(2), log2_up(3));
+        assert_eq!(Pow(2), log2_up(4));
+        assert_eq!(Pow(3), log2_up(5));
+        assert_eq!(Pow(3), log2_up(6));
+        assert_eq!(Pow(3), log2_up(7));
+        assert_eq!(Pow(3), log2_up(8));
+        assert_eq!(Pow(4), log2_up(9));
         for i in 1..100 {
             let k = log2_up(i);
             assert_le!(i, k.value());
@@ -172,8 +194,8 @@ mod tests {
         }
         for k in 2..10 {
             let i = 1 << k;
-            assert_eq!(log2_up(i).exponent(), k);
-            assert_eq!(log2_down(i).exponent(), k);
+            assert_eq!(log2_up(i), Pow(k));
+            assert_eq!(log2_down(i), Pow(k));
         }
     }
 
@@ -193,24 +215,24 @@ mod tests {
     #[test]
     fn test_round() {
         let bs = 4;
-        assert_eq!((0, 0), round_down(0, bs));
-        assert_eq!((0, 0), round_up(0, bs));
-        assert_eq!((0, 0), round_down(1, bs));
-        assert_eq!((1, 4), round_up(1, bs));
+        assert_eq!((BlockIdx(0), 0), round_down(0, bs));
+        assert_eq!((BlockIdx(0), 0), round_up(0, bs));
+        assert_eq!((BlockIdx(0), 0), round_down(1, bs));
+        assert_eq!((BlockIdx(1), 4), round_up(1, bs));
 
-        assert_eq!((0, 0), round_down(2, bs));
-        assert_eq!((1, 4), round_up(2, bs));
+        assert_eq!((BlockIdx(0), 0), round_down(2, bs));
+        assert_eq!((BlockIdx(1), 4), round_up(2, bs));
 
-        assert_eq!((0, 0), round_down(3, bs));
-        assert_eq!((1, 4), round_up(3, bs));
+        assert_eq!((BlockIdx(0), 0), round_down(3, bs));
+        assert_eq!((BlockIdx(1), 4), round_up(3, bs));
 
-        assert_eq!((1, 4), round_down(4, bs));
-        assert_eq!((1, 4), round_up(4, bs));
+        assert_eq!((BlockIdx(1), 4), round_down(4, bs));
+        assert_eq!((BlockIdx(1), 4), round_up(4, bs));
 
-        assert_eq!((1, 4), round_down(5, bs));
-        assert_eq!((2, 8), round_up(5, bs));
+        assert_eq!((BlockIdx(1), 4), round_down(5, bs));
+        assert_eq!((BlockIdx(2), 8), round_up(5, bs));
 
-        assert_eq!((1, 4), round_down(6, bs));
-        assert_eq!((2, 8), round_up(6, bs));
+        assert_eq!((BlockIdx(1), 4), round_down(6, bs));
+        assert_eq!((BlockIdx(2), 8), round_up(6, bs));
     }
 }

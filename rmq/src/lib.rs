@@ -1,126 +1,27 @@
+mod brute_force;
+mod cmp;
+mod full_table;
+mod inter_table;
+mod interval;
 mod math;
-use math::{log2_up, log_table_size, round_down, round_up, Pow};
-
+mod power_table;
+mod powers;
+mod reduce;
 mod rmq_array;
+
 #[allow(unused_imports)] // Importing RMQArray to expose it; I don't use it here
 use rmq_array::RMQArray;
-use rmq_array::{Idx, RMQArrayImpl, RMQArray_, Val};
-
-mod cmp;
-use cmp::{min3, Min};
-
-/// A point is an index with the corresponding value
-#[derive(Clone, Copy)]
-pub struct Point(Idx, Val);
-
-impl Point {
-    #[inline]
-    pub fn idx(&self) -> Idx {
-        self.0
-    }
-    #[inline]
-    pub fn val(&self) -> Val {
-        self.1
-    }
-}
-
-impl Min for Point {
-    #[inline]
-    fn min(p1: Point, p2: Point) -> Point {
-        match p1.val() <= p2.val() {
-            true => p1,
-            false => p2,
-        }
-    }
-}
-
-/// Finds the left-most index with the smallest value in x.
-/// Returns the index of the left-most minimal value and the
-/// minimal value. If [i,j) is not a valid interval, you ged
-/// None.
-fn smallest_in_range(x: &[Val], i: Idx, j: Idx) -> Option<Point> {
-    let y = &x[i..j];
-    let min_val = y.iter().min()?;
-    let pos = i + y.iter().position(|a| a == min_val)?;
-    Some(Point(pos, *min_val))
-}
-
-/// Picks the index with the smallest value
-#[inline]
-fn select_index(x: &[Val], i: Idx, j: Idx) -> Idx {
-    match x[i] <= x[j] {
-        true => i,
-        false => j,
-    }
-}
+use rmq_array::RMQArray_;
 
 /// Implements RMQ by running through the [i,j) interval
 /// and finding the index with the smallest value.
 /// O(1) preprocessing and O(n) access.
-pub struct BruteForceRMQImpl {
-    values: Vec<u32>,
-}
-
-impl RMQArrayImpl for BruteForceRMQImpl {
-    fn new(values: Vec<Val>) -> BruteForceRMQImpl {
-        BruteForceRMQImpl { values }
-    }
-
-    fn len(&self) -> Idx {
-        self.values.len()
-    }
-    fn val(&self, index: Idx) -> &Val {
-        &self.values[index]
-    }
-    fn rmq(&self, i: Idx, j: Idx) -> Idx {
-        smallest_in_range(&self.values, i, j).unwrap().idx()
-    }
-}
-
-mod inter_table;
-use inter_table::InterTable;
-
-pub type BruteForceRMQ = RMQArray_<BruteForceRMQImpl>;
+pub type BruteForceRMQ = RMQArray_<brute_force::BruteForceRMQImpl>;
 
 /// Implements RMQ by table lookup. Has a complete table of all [i,j),
 /// so uses O(n²) memory, takes O(n²) time preprocessing, but then
 /// does RMQ in O(1).
-pub struct FullTabulateRMQImpl {
-    values: Vec<u32>,
-    rmq: InterTable,
-}
-pub type FullTabulateRMQ = RMQArray_<FullTabulateRMQImpl>;
-
-impl RMQArrayImpl for FullTabulateRMQImpl {
-    fn new(values: Vec<u32>) -> FullTabulateRMQImpl {
-        let mut rmq = InterTable::new(values.len());
-        for i in 0..values.len() {
-            rmq[(i, i + 1)] = i;
-        }
-        for i in 0..values.len() - 1 {
-            for j in i + 2..values.len() + 1 {
-                // Dynamic programming:
-                // Min val in [i,j) is either min in [i,j-1) or
-                // [j-1,j) (i.e. index j-1).
-                let k = rmq[(i, j - 1)]; // best to the left
-                rmq[(i, j)] = select_index(&values, k, j - 1)
-            }
-        }
-        FullTabulateRMQImpl { values, rmq }
-    }
-    fn len(&self) -> Idx {
-        self.values.len()
-    }
-    fn val(&self, index: Idx) -> &Val {
-        &self.values[index]
-    }
-    fn rmq(&self, i: Idx, j: Idx) -> Idx {
-        self.rmq[(i, j)]
-    }
-}
-
-mod power_table;
-use power_table::{adjusted_index, TwoD};
+pub type FullTabulateRMQ = RMQArray_<full_table::FullTabulateRMQImpl>;
 
 /// RMQ table that tabulates all [i,i+2^k] ranges (there are O(n log n)),
 /// form which we can get the RMQ from the table by splitting [i,j) into
@@ -128,119 +29,17 @@ use power_table::{adjusted_index, TwoD};
 /// the RMQ from those two intervals with a table lookup in O(1) and then
 /// pick the one of those with the smallest value.
 /// The result is O(n log n) preprocessing and O(1) lookup.
-pub struct PowerRMQImpl {
-    lcp: Vec<Val>,
-    tbl: TwoD,
-}
-
-impl RMQArrayImpl for PowerRMQImpl {
-    fn new(lcp: Vec<u32>) -> PowerRMQImpl {
-        let n = lcp.len();
-
-        // When tbl is a TwoD table, interpret tbl[i,Pow(k)] as containing
-        // values (at powers of two) in the range [i,i+2^k).
-        let Pow(logn) = log_table_size(n);
-        let mut tbl = TwoD::new(n);
-
-        // Base case: intervals [i,i+1) = [i,i+2^0).
-        for i in 0..n {
-            tbl[(i, Pow(0))] = i;
-        }
-
-        // Dynamic programming construction of tables of increasing length.
-        // We have O(log n) runs of the outer loop and O(n) of the inner,
-        // so the total time is O(n log n).
-        for k in 1..logn {
-            // i+ii is half-way in the interval [i,i+2^k); [i,i+2^k)=[i,i+2^{k-1})[i+2^{k-1},i+2^k).
-            for i in 0..(n - Pow(k - 1).value()) {
-                // Interval [i,i+2^k) = [i,i+2^{k-1}) [i+2^{k-1},(i+2^{k-1})+2^{k-1})
-                tbl[(i, Pow(k))] = select_index(
-                    &lcp,
-                    // [i,i+2^{k-1})
-                    tbl[(i, Pow(k - 1))],
-                    // [i+2^{k-1},(i+2^{k-1})+2^{k-1})
-                    tbl[(i + Pow(k - 1).value(), Pow(k - 1))],
-                );
-            }
-        }
-        PowerRMQImpl { lcp, tbl }
-    }
-    fn len(&self) -> Idx {
-        self.lcp.len()
-    }
-    fn val(&self, index: Idx) -> &Val {
-        &self.lcp[index]
-    }
-    fn rmq(&self, i: Idx, j: Idx) -> Idx {
-        // Work out k so [i,2^k) and [j-2^k,j) are overlapping (and are not overlapping)
-        // anything outside of [i,j). Then use the table to get the index with the smallest
-        // lcp in those intervals, and pick the smaller of the two (with the first index
-        // in case of a tie). All in O(1).
-        let (p, ii) = adjusted_index(i, j);
-        let i1 = self.tbl[(i, p)];
-        let i2 = self.tbl[(ii, p)];
-        select_index(&self.lcp, i1, i2)
-    }
-}
-
-pub type PowerRMQ = RMQArray_<PowerRMQImpl>;
-
-mod reduce;
-use reduce::reduce_array;
-
-pub struct ReducedPowerRMQImpl {
-    lcp: Vec<Val>,
-    block_size: usize,
-    reduced_index: Vec<Idx>,
-    tbl: PowerRMQImpl,
-}
+pub type PowerRMQ = RMQArray_<powers::PowerRMQImpl>;
 
 /// Reduces the input vector to one of length m = n/log(n); then preprocess
 /// it with the PowerRMQ method (in time m log m = n/log(n) log(n/log(n)) = O(n)).
 /// Lookup is now one constant time lookup in the PowerRMQ and two linear searches
 /// in blocks of length log n. So, preprocessing O(n) and lookup O(log n).
-impl RMQArrayImpl for ReducedPowerRMQImpl {
-    fn new(lcp: Vec<Val>) -> ReducedPowerRMQImpl {
-        let block_size = log2_up(lcp.len()).exponent();
-        let (reduced_index, reduced_values) = reduce_array(&lcp, block_size);
-        let tbl = PowerRMQImpl::new(reduced_values);
-        ReducedPowerRMQImpl {
-            lcp,
-            block_size,
-            reduced_index,
-            tbl,
-        }
-    }
-    fn len(&self) -> Idx {
-        self.lcp.len()
-    }
-    fn val(&self, index: Idx) -> &Val {
-        &self.lcp[index]
-    }
-
-    fn rmq(&self, i: Idx, j: Idx) -> Idx {
-        let (bi, ii) = round_up(i, self.block_size);
-        let (bj, jj) = round_down(j, self.block_size);
-        if bi < bj {
-            let p1 = smallest_in_range(&self.lcp, i, ii);
-            let p2 = {
-                let ri = self.tbl.rmq(bi, bj);
-                Some(Point(self.reduced_index[ri], *self.tbl.val(ri)))
-            };
-            let p3 = smallest_in_range(&self.lcp, jj, j);
-            min3(p1, p2, p3)
-        } else {
-            smallest_in_range(&self.lcp, i, j)
-        }
-        .unwrap()
-        .idx()
-    }
-}
-
-pub type ReducedPowerRMQ = RMQArray_<ReducedPowerRMQImpl>;
+pub type ReducedPowerRMQ = RMQArray_<reduce::ReducedPowerRMQImpl>;
 
 #[cfg(test)]
 mod tests {
+    use super::interval::{Idx, Point};
     use super::*;
 
     fn check_same_index<R: RMQArray>(rmqa: &R, vals: &Vec<u32>) {
@@ -251,7 +50,7 @@ mod tests {
     }
 
     fn check_min_in_interval<R: RMQArray>(rmqa: &R, i: Idx, j: Idx) {
-        let k = rmqa.rmq(i, j);
+        let Point(k, _) = rmqa.rmq(i, j);
         assert!(i <= k);
         assert!(k < j);
 
@@ -334,49 +133,11 @@ mod tests {
 
     #[test]
     fn test_rmq_power() {
-        // First a few checks of the Power specific table...
-        // can we handle the diagonal (base case of the dynamic programming),
-        // and can we handle the cases where we only look up in the table?
-        let v = vec![2, 1, 2, 5, 3, 6, 1, 3, 7, 4, 1, 2, 4, 5, 6, 7];
-        let rmqa = PowerRMQ::new(v.clone());
-        println!("{:?}", &v);
-        println!("{}", rmqa.tbl);
-        println!("{}", rmqa.rmq(0, rmqa.len()));
-
-        // Checking diagonal
-        for i in 0..v.len() {
-            assert_eq!(i, rmqa.rmq(i, i + 1));
-        }
-
-        // Checking powers
-        for i in 0..v.len() {
-            for k in [0, 1, 2, 3] {
-                let j = i + (1 << k);
-                if j > v.len() {
-                    continue;
-                }
-                let i1 = smallest_in_range(&v, i, j).unwrap().idx();
-                let i2 = rmqa.rmq(i, j);
-                println!(
-                    "[{},{}): {}, {}, [offset={}] {:?}",
-                    i,
-                    j,
-                    i1,
-                    i2,
-                    i,
-                    &v[i..j]
-                );
-                assert_eq!(i1, i2);
-            }
-        }
-
-        // Full check
         check_rmq::<PowerRMQ>()
     }
 
     #[test]
     fn test_rmq_reduced_power() {
-        // Full check
         check_rmq::<ReducedPowerRMQ>()
     }
 }

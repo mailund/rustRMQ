@@ -1,7 +1,4 @@
-/// The type we use for indexing into our arrays.
-pub type Idx = usize;
-/// The type our arrays hold. 32-bit are enough for genomic data.
-pub type Val = u32;
+use super::interval::{Idx, Point, Val};
 
 /// To make a RMQArray, you should implement this and then wrap the type
 /// in RMQArray_<>.
@@ -12,8 +9,13 @@ pub trait RMQArrayImpl {
     fn len(&self) -> Idx;
     /// Get the value at a specific index.
     fn val(&self, index: Idx) -> &Val;
-    /// Get the index of the first minimal value in the range [i,j).
-    fn rmq(&self, i: Idx, j: Idx) -> Idx;
+    /// Get the point at the first minimal value in the range [i,j).
+    fn rmq(&self, i: Idx, j: Idx) -> Point;
+
+    /// Get an index as a value
+    fn point(&self, i: Idx) -> Point {
+        Point(i, *self.val(i))
+    }
 }
 
 /// Range Minimum Query interface.
@@ -41,8 +43,8 @@ where
     fn val(&self, i: Idx) -> &Val {
         self.0.val(i)
     }
-    /// Get the index of the first minimal value in the range [i,j).
-    fn rmq(&self, i: Idx, j: Idx) -> Idx {
+    /// Get the point at the first minimal value in the range [i,j).
+    fn rmq(&self, i: Idx, j: Idx) -> Point {
         self.0.rmq(i, j)
     }
 }
