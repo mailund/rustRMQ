@@ -11,6 +11,8 @@ mod rmq_array;
 
 #[allow(unused_imports)] // Importing RMQArray to expose it; I don't use it here
 use rmq_array::RMQArray;
+#[allow(unused_imports)] // Importing RMQArray to expose it; I don't use it here
+use rmq_array::RMQArrayImpl;
 use rmq_array::RMQArray_;
 
 /// Implements RMQ by running through the [i,j) interval
@@ -39,7 +41,7 @@ pub type ReducedPowerRMQ = RMQArray_<reduce::ReducedPowerRMQImpl>;
 
 #[cfg(test)]
 mod tests {
-    use super::interval::{Idx, Point};
+    use super::interval::{Idx, Point, Val};
     use super::*;
 
     fn check_same_index<R: RMQArray>(rmqa: &R, vals: &Vec<u32>) {
@@ -139,5 +141,103 @@ mod tests {
     #[test]
     fn test_rmq_reduced_power() {
         check_rmq::<ReducedPowerRMQ>()
+    }
+
+    // Not really RMQ but trying to use them on lcp-intervals
+    fn next_lidx<RMQ: RMQArray>(lcp: &RMQ, i: Idx, j: Idx, l: Val) -> Option<Idx> {
+        match (i, j) {
+            (i, j) if i == j => None,        // empty interval at the end...
+            (i, j) if j == i + 1 => Some(j), // last interval
+            (i, j) if j > i + 1 => match lcp.rmq(i + 1, j) {
+                Point(ii, ll) if l == ll => Some(ii),
+                _ => Some(j), // We reached the end
+            },
+            _ => panic!("Interval with end point before start point"),
+        }
+    }
+    fn children<RMQ: RMQArray>(lcp: &RMQ, i: Idx, j: Idx) -> (Val, Vec<(Idx, Idx)>) {
+        let mut res: Vec<(Idx, Idx)> = Vec::new();
+        let Point(mut prev, l) = lcp.rmq(i + 1, j);
+        res.push((i, prev));
+        while let Some(ii) = next_lidx(lcp, prev, j, l) {
+            res.push((prev, ii));
+            prev = ii;
+        }
+        (l, res)
+    }
+    fn widest(v: &Vec<(Idx, Idx)>) -> (Idx, Idx) {
+        let mut widest = (0, 0);
+        for (i, j) in v {
+            if (j - i) > (widest.1 - widest.0) {
+                widest = (*i, *j);
+            }
+        }
+        widest
+    }
+
+    // Collecting the arguments in a struct...
+    struct BTR<'a, RMQ: RMQArray> {
+        sa: &'a Vec<Idx>,
+        isa: &'a Vec<Idx>,
+        lcp: &'a RMQ,
+    }
+
+    fn branch_tr_rec<RMQ: RMQArray>(btr: &BTR<RMQ>, i: Idx, j: Idx, res: &mut Vec<(Idx, Val)>) {
+        let (l, sub_intervals) = children(btr.lcp, i, j);
+        let offset = l as Idx;
+        let (wi, wj) = widest(&sub_intervals);
+        for (ii, jj) in sub_intervals {
+            if (ii, jj) == (wi, wj) {
+                // skip widest interval
+                continue;
+            }
+            if jj - ii > 1 {
+                // sub interval rather than leaf
+                branch_tr_rec(btr, ii, jj, res);
+            }
+            for q in ii..jj {
+                if btr.sa[q] + offset < btr.sa.len() {
+                    let r = btr.isa[btr.sa[q] + offset];
+                    if (i <= r && r < ii) || (jj <= r && r < j) {
+                        res.push((btr.sa[q], 2 * l))
+                    }
+                }
+                if offset < btr.sa[q] {
+                    let r = btr.isa[btr.sa[q] - offset];
+                    if wi <= r && r < wj {
+                        res.push((btr.sa[r], 2 * l))
+                    }
+                }
+            }
+        }
+    }
+    fn branch_tr<RMQ: RMQArray>(btr: &BTR<RMQ>, i: Idx, j: Idx) -> Vec<(Idx, Val)> {
+        let mut res: Vec<(Idx, Val)> = Vec::new();
+        branch_tr_rec(btr, i, j, &mut res);
+        res
+    }
+
+    #[test]
+    fn mississippi() {
+        let x = "mississippi$";
+        let sa: Vec<Idx> = vec![11, 10, 7, 4, 1, 0, 9, 8, 6, 3, 5, 2];
+        let mut isa: Vec<Idx> = vec![0; sa.len()];
+        for (i, ii) in sa.iter().enumerate() {
+            isa[*ii] = i;
+        }
+        let lcp = PowerRMQ::new(vec![0, 0, 1, 1, 4, 0, 0, 1, 0, 2, 1, 3]);
+        let btr = BTR {
+            sa: &sa,
+            isa: &isa,
+            lcp: &lcp,
+        };
+        for (i, l) in branch_tr(&btr, 0, lcp.len()).iter() {
+            println!(
+                "Branching tandem repeat {} at {}",
+                &x[*i..*i + *l as Idx],
+                i
+            );
+        }
+        //assert!(false);
     }
 }
